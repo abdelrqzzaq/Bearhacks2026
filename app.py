@@ -138,6 +138,7 @@ class FileExplorerApp:
 
         self.root.bind("<Tab>", self._on_tab)
         self.root.bind("<Shift-Tab>", self._on_shift_tab)
+        self.root.bind("<Return>", self._on_enter)
 
         self.navigate(self.current_path, push=False)
 
@@ -193,19 +194,8 @@ class FileExplorerApp:
         content = tk.Frame(body, bg=CONTENT_BG)
         content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Horizontal scrollbar at bottom
-        hbar = ttk.Scrollbar(content, orient=tk.HORIZONTAL)
-        hbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # Vertical scrollbar at right
-        vbar = ttk.Scrollbar(content, orient=tk.VERTICAL)
-        vbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.cvs = tk.Canvas(content, bg=CONTENT_BG, highlightthickness=0,
-                             xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+        self.cvs = tk.Canvas(content, bg=CONTENT_BG, highlightthickness=0)
         self.cvs.pack(fill=tk.BOTH, expand=True)
-        hbar.config(command=self.cvs.xview)
-        vbar.config(command=self.cvs.yview)
 
         self.grid_frame = tk.Frame(self.cvs, bg=CONTENT_BG)
         self.grid_win = self.cvs.create_window((0, 0), window=self.grid_frame,
@@ -327,6 +317,11 @@ class FileExplorerApp:
         self._on_frame_config()
 
     # ── Tile events ───────────────────────────────────────────────────────────
+    def _on_enter(self, event):
+        if self.sel_tile:
+            self._dbl(self.sel_tile)
+        return "break"
+
     def _on_tab(self, event):
         if not self._tiles: return "break"
         idx = (self._tiles.index(self.sel_tile) + 1) % len(self._tiles) if self.sel_tile in self._tiles else 0
