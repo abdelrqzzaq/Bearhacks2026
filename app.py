@@ -1,333 +1,558 @@
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import file_ops
+
+# ── Windows 11 light palette ─────────────────────────────────────────────────
+BG          = "#f3f3f3"
+TOPBAR_BG   = "#ffffff"
+SIDEBAR_BG  = "#f9f9f9"
+CONTENT_BG  = "#ffffff"
+ITEM_BG     = "#ffffff"
+ITEM_HOVER  = "#e5e5e5"
+ITEM_SEL    = "#ddeeff"
+BORDER      = "#e0e0e0"
+ACCENT      = "#0067c0"
+TEXT_MAIN   = "#1a1a1a"
+TEXT_SUB    = "#555555"
+TEXT_DIM    = "#999999"
+TOOLBAR_BTN = "#f5f5f5"
+TOOLBAR_HOV = "#e0e0e0"
+TOOLBAR_ACT = "#d0d0d0"
+
+FOLDER_GOLD  = "#ffb900"
+FOLDER_LIGHT = "#ffd75e"
+FOLDER_DARK  = "#e09b00"
+FOLDER_BODY  = "#ffc73a"
+
+
+def draw_folder(canvas, cx, cy, w=72, h=56, hover=False, selected=False):
+    """Draw a Windows-style yellow folder icon centred at cx,cy."""
+    canvas.delete("icon")
+    if hover or selected:
+        gold  = "#ffd75e"; light = "#ffe799"; dark = "#c98b00"; body = "#ffcc4d"
+    else:
+        gold  = FOLDER_GOLD; light = FOLDER_LIGHT; dark = FOLDER_DARK; body = FOLDER_BODY
+
+    x1, y1 = cx - w//2, cy - h//2
+    x2, y2 = cx + w//2, cy + h//2
+    tab_w   = int(w * 0.38)
+    tab_h   = int(h * 0.13)
+    body_y  = y1 + int(h * 0.20)
+
+    # Back panel
+    canvas.create_rectangle(x1, body_y, x2, y2,
+                             fill=dark, outline="", tags="icon")
+    # Tab
+    canvas.create_rectangle(x1, body_y - tab_h, x1 + tab_w, body_y + 2,
+                             fill=dark, outline="", tags="icon")
+    # Round top-right of tab (small triangle fake)
+    canvas.create_polygon(x1+tab_w, body_y-tab_h,
+                           x1+tab_w+tab_h, body_y-tab_h,
+                           x1+tab_w+tab_h, body_y,
+                           fill=dark, outline="", tags="icon")
+    # Body
+    canvas.create_rectangle(x1, body_y, x2, y2,
+                             fill=body, outline="", tags="icon")
+    # Front lighter panel
+    front_y = body_y + int(h * 0.12)
+    canvas.create_rectangle(x1+2, front_y, x2-2, y2-2,
+                             fill=gold, outline="", tags="icon")
+    # Top shine strip
+    canvas.create_rectangle(x1+2, front_y, x2-2, front_y + int(h*0.09),
+                             fill=light, outline="", tags="icon")
+    # Subtle bottom shadow
+    canvas.create_rectangle(x1+2, y2 - int(h*0.09), x2-2, y2-2,
+                             fill=dark, outline="", tags="icon")
+
+
+class FolderTile(tk.Frame):
+    W, H = 100, 100
+
+    def __init__(self, parent, name, on_single, on_double, on_right):
+        super().__init__(parent, bg=ITEM_BG,
+                         width=self.W, height=self.H, cursor="hand2")
+        self.pack_propagate(False)
+        self.name      = name
+        self._sel      = False
+        self._hov      = False
+
+        self.cvs = tk.Canvas(self, width=self.W, height=68,
+                             bg=ITEM_BG, highlightthickness=0)
+        self.cvs.pack()
+        draw_folder(self.cvs, self.W//2, 36)
+
+        lbl_text = name if len(name) <= 15 else name[:13] + "…"
+        self.lbl = tk.Label(self, text=lbl_text, bg=ITEM_BG,
+                            fg=TEXT_MAIN, font=("Segoe UI", 8),
+                            wraplength=self.W-6, justify=tk.CENTER)
+        self.lbl.pack()
+
+        for w in (self, self.cvs, self.lbl):
+            w.bind("<Button-1>",        lambda e: on_single(self))
+            w.bind("<Double-Button-1>", lambda e: on_double(self))
+            w.bind("<Button-3>",        lambda e: on_right(self, e))
+            w.bind("<Enter>",           self._enter)
+            w.bind("<Leave>",           self._leave)
+
+    def _apply(self):
+        col = ITEM_SEL if self._sel else (ITEM_HOVER if self._hov else ITEM_BG)
+        self.config(bg=col)
+        self.cvs.config(bg=col)
+        self.lbl.config(bg=col)
+        draw_folder(self.cvs, self.W//2, 36,
+                    hover=self._hov, selected=self._sel)
+
+    def set_selected(self, v):
+        self._sel = v; self._apply()
+
+    def _enter(self, _=None):
+        self._hov = True
+        if not self._sel: self._apply()
+
+    def _leave(self, _=None):
+        self._hov = False
+        if not self._sel: self._apply()
 
 
 class FileExplorerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Gesture Explorer")
-        self.root.geometry("1000x650")
-        self.root.configure(bg="#1e1e2e")
+        self.root.title("File Explorer")
+        self.root.geometry("1100x680")
+        self.root.configure(bg=BG)
+        self.root.minsize(700, 450)
 
-        self.current_path = os.path.expanduser("~")
-        self.selected_item_path = None
+        self.current_path  = os.path.expanduser("~")
+        self.history       = [self.current_path]
+        self.hidx          = 0
+        self.sel_tile      = None
+        self.sel_path      = None
+        self._tiles        = []
 
-        self._build_styles()
+        self._styles()
+        self._build_titlebar()
         self._build_toolbar()
-        self._build_main_area()
-        self._build_status_bar()
+        self._build_body()
+        self._build_statusbar()
 
-        self.refresh_tree()
-        self.refresh_list(self.current_path)
+        self.navigate(self.current_path, push=False)
 
-    # ── Styles ──────────────────────────────────────────────────────────────
+    # ── TTK styles ────────────────────────────────────────────────────────────
+    def _styles(self):
+        s = ttk.Style()
+        s.theme_use("clam")
+        s.configure("Treeview",
+            background=SIDEBAR_BG, foreground=TEXT_MAIN,
+            fieldbackground=SIDEBAR_BG, rowheight=28,
+            font=("Segoe UI", 9), borderwidth=0, relief="flat")
+        s.configure("Treeview.Heading", background=SIDEBAR_BG,
+                    foreground=TEXT_DIM, font=("Segoe UI", 8, "bold"))
+        s.map("Treeview",
+              background=[("selected", ITEM_SEL)],
+              foreground=[("selected", TEXT_MAIN)])
+        s.configure("Vertical.TScrollbar", troughcolor=BG, background=BORDER)
+        s.configure("Horizontal.TScrollbar", troughcolor=BG, background=BORDER)
 
-    def _build_styles(self):
-        style = ttk.Style()
-        style.theme_use("clam")
+    # ── Title bar (mimics Windows chrome) ─────────────────────────────────────
+    def _build_titlebar(self):
+        bar = tk.Frame(self.root, bg=TOPBAR_BG,
+                       highlightbackground=BORDER, highlightthickness=1)
+        bar.pack(side=tk.TOP, fill=tk.X)
 
-        style.configure("Treeview",
-            background="#181825", foreground="#cdd6f4",
-            fieldbackground="#181825", rowheight=24,
-            font=("Courier New", 10))
-        style.configure("Treeview.Heading",
-            background="#313244", foreground="#cba6f7", font=("Courier New", 10, "bold"))
-        style.map("Treeview", background=[("selected", "#45475a")])
+        # Tab label
+        tab = tk.Frame(bar, bg=TOPBAR_BG)
+        tab.pack(side=tk.LEFT, padx=6, pady=4)
+        tk.Label(tab, text="🗂", bg=TOPBAR_BG,
+                 font=("Segoe UI", 11)).pack(side=tk.LEFT)
+        self.title_var = tk.StringVar(value="File Explorer")
+        tk.Label(tab, textvariable=self.title_var, bg=TOPBAR_BG,
+                 fg=TEXT_MAIN, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=4)
 
-        style.configure("TFrame", background="#1e1e2e")
-        style.configure("TPanedwindow", background="#1e1e2e")
+        # Window controls (decorative)
+        ctrl = tk.Frame(bar, bg=TOPBAR_BG)
+        ctrl.pack(side=tk.RIGHT)
+        for sym, col, hcol in [("─", TOPBAR_BG, TOOLBAR_HOV),
+                                ("□", TOPBAR_BG, TOOLBAR_HOV),
+                                ("✕", TOPBAR_BG, "#c42b1c")]:
+            b = tk.Button(ctrl, text=sym, bg=TOPBAR_BG, fg=TEXT_MAIN,
+                          relief=tk.FLAT, font=("Segoe UI", 10),
+                          width=4, pady=4, bd=0,
+                          activebackground=hcol, activeforeground="#ffffff",
+                          cursor="hand2")
+            b.pack(side=tk.LEFT)
 
-    # ── Toolbar ─────────────────────────────────────────────────────────────
-
+    # ── Nav + address bar ─────────────────────────────────────────────────────
     def _build_toolbar(self):
-        toolbar = tk.Frame(self.root, bg="#313244", pady=4)
-        toolbar.pack(side=tk.TOP, fill=tk.X)
+        # Row 1: nav + address
+        nav_bar = tk.Frame(self.root, bg=TOPBAR_BG)
+        nav_bar.pack(side=tk.TOP, fill=tk.X)
+        tk.Frame(nav_bar, bg=BORDER, height=1).pack(side=tk.BOTTOM, fill=tk.X)
 
-        btn_cfg = dict(bg="#45475a", fg="#cdd6f4", relief=tk.FLAT,
-                       padx=10, pady=3, cursor="hand2",
-                       font=("Courier New", 10), activebackground="#585b70")
+        nav = tk.Frame(nav_bar, bg=TOPBAR_BG)
+        nav.pack(side=tk.LEFT, padx=8, pady=6)
 
-        tk.Button(toolbar, text="⬆ Up", command=self.go_up, **btn_cfg).pack(side=tk.LEFT, padx=4)
-        tk.Button(toolbar, text="📁 New Folder", command=self.create_folder, **btn_cfg).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="📄 New File", command=self.create_file, **btn_cfg).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="✏ Rename", command=self.rename_item, **btn_cfg).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="🗑 Delete", command=self.delete_item, **btn_cfg).pack(side=tk.LEFT, padx=2)
+        self.btn_back = self._nav_btn(nav, "←", self.go_back)
+        self.btn_fwd  = self._nav_btn(nav, "→", self.go_forward)
+        self._nav_btn(nav, "↑", self.go_up)
+        self._nav_btn(nav, "↻", lambda: self.navigate(self.current_path, push=False))
 
-        self.path_var = tk.StringVar(value=self.current_path)
-        path_entry = tk.Entry(toolbar, textvariable=self.path_var, bg="#181825",
-                              fg="#a6e3a1", insertbackground="#cdd6f4",
-                              font=("Courier New", 10), relief=tk.FLAT, bd=4)
-        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
-        path_entry.bind("<Return>", self.navigate_to_path)
+        # Address bar
+        addr = tk.Frame(nav_bar, bg="#ffffff",
+                        highlightbackground=BORDER, highlightthickness=1)
+        addr.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=6)
+        self.path_var = tk.StringVar()
+        tk.Entry(addr, textvariable=self.path_var, bg="#ffffff",
+                 fg=TEXT_MAIN, font=("Segoe UI", 10), relief=tk.FLAT,
+                 bd=5, insertbackground=ACCENT
+                 ).pack(fill=tk.X)
+        addr.bind_all("<Return>",
+                      lambda e: self.navigate(self.path_var.get().strip()))
 
-    # ── Main Area ────────────────────────────────────────────────────────────
+        # Row 2: action toolbar (New, Cut, Copy, Rename, Delete, Sort, View)
+        tb = tk.Frame(self.root, bg=TOPBAR_BG)
+        tb.pack(side=tk.TOP, fill=tk.X)
+        tk.Frame(tb, bg=BORDER, height=1).pack(side=tk.BOTTOM, fill=tk.X)
 
-    def _build_main_area(self):
-        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        inner = tk.Frame(tb, bg=TOPBAR_BG)
+        inner.pack(side=tk.LEFT, padx=8, pady=4)
 
-        # Left: folder tree
-        left_frame = tk.Frame(paned, bg="#181825")
-        paned.add(left_frame, weight=1)
+        # New button (dropdown-style)
+        new_btn = self._tb_btn(inner, "⊕  New  ▾", None)
+        new_btn.config(command=lambda: self._new_menu(new_btn))
 
-        tree_scroll = ttk.Scrollbar(left_frame)
-        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        tk.Frame(inner, bg=BORDER, width=1, height=22).pack(side=tk.LEFT, padx=6)
 
-        self.tree = ttk.Treeview(left_frame, yscrollcommand=tree_scroll.set, selectmode="browse")
-        self.tree.heading("#0", text="Folders", anchor=tk.W)
-        self.tree.pack(fill=tk.BOTH, expand=True)
-        tree_scroll.config(command=self.tree.yview)
+        self._tb_btn(inner, "✂", None, tip="Cut")
+        self._tb_btn(inner, "⎘", None, tip="Copy")
+        self._tb_btn(inner, "📋", None, tip="Paste")
 
-        self.tree.bind("<<TreeviewOpen>>", self.on_tree_open)
-        self.tree.bind("<ButtonRelease-1>", self.on_tree_select)
-        self.tree.bind("<Button-3>", self.show_tree_context_menu)
+        tk.Frame(inner, bg=BORDER, width=1, height=22).pack(side=tk.LEFT, padx=6)
 
-        # Right: split between file list and editor
-        right_paned = ttk.PanedWindow(paned, orient=tk.VERTICAL)
-        paned.add(right_paned, weight=3)
+        self._tb_btn(inner, "✎  Rename", self.rename_item)
+        self._tb_btn(inner, "🗑  Delete", self.delete_item)
 
-        # File list
-        list_frame = tk.Frame(right_paned, bg="#181825")
-        right_paned.add(list_frame, weight=2)
+        tk.Frame(inner, bg=BORDER, width=1, height=22).pack(side=tk.LEFT, padx=6)
+        self._tb_btn(inner, "⊞  Sort ▾", None)
+        self._tb_btn(inner, "👁  View ▾", None)
 
-        list_scroll = ttk.Scrollbar(list_frame)
-        list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        # Details on right
+        tk.Label(tb, text="Details", bg=TOPBAR_BG, fg=TEXT_SUB,
+                 font=("Segoe UI", 9), cursor="hand2",
+                 padx=12).pack(side=tk.RIGHT, pady=4)
 
-        self.file_list = tk.Listbox(list_frame, yscrollcommand=list_scroll.set,
-            bg="#181825", fg="#cdd6f4", selectbackground="#45475a",
-            font=("Courier New", 11), relief=tk.FLAT, bd=0,
-            activestyle="none", cursor="hand2")
-        self.file_list.pack(fill=tk.BOTH, expand=True)
-        list_scroll.config(command=self.file_list.yview)
+    def _nav_btn(self, parent, text, cmd):
+        b = tk.Button(parent, text=text, command=cmd,
+            bg=TOPBAR_BG, fg=TEXT_MAIN, relief=tk.FLAT,
+            font=("Segoe UI", 11), width=3, cursor="hand2",
+            activebackground=TOOLBAR_HOV, bd=0)
+        b.pack(side=tk.LEFT, padx=1)
+        b.bind("<Enter>", lambda e: b.config(bg=TOOLBAR_HOV))
+        b.bind("<Leave>", lambda e: b.config(bg=TOPBAR_BG))
+        return b
 
-        self.file_list.bind("<Double-Button-1>", self.on_list_double_click)
-        self.file_list.bind("<ButtonRelease-1>", self.on_list_select)
-        self.file_list.bind("<Button-3>", self.show_list_context_menu)
+    def _tb_btn(self, parent, text, cmd, tip=""):
+        b = tk.Button(parent, text=text, command=cmd if cmd else lambda: None,
+            bg=TOOLBAR_BTN, fg=TEXT_MAIN, relief=tk.FLAT,
+            font=("Segoe UI", 9), padx=10, pady=3,
+            cursor="hand2", activebackground=TOOLBAR_ACT, bd=0,
+            highlightbackground=BORDER, highlightthickness=0)
+        b.pack(side=tk.LEFT, padx=2)
+        b.bind("<Enter>", lambda e: b.config(bg=TOOLBAR_HOV))
+        b.bind("<Leave>", lambda e: b.config(bg=TOOLBAR_BTN))
+        return b
 
-        # Editor
-        editor_frame = tk.Frame(right_paned, bg="#181825")
-        right_paned.add(editor_frame, weight=3)
+    def _new_menu(self, widget):
+        m = tk.Menu(self.root, tearoff=0, font=("Segoe UI", 9),
+                    bg=TOPBAR_BG, fg=TEXT_MAIN,
+                    activebackground=ITEM_SEL, activeforeground=TEXT_MAIN)
+        m.add_command(label="📁  Folder", command=self.create_folder)
+        m.add_command(label="📄  File",   command=self.create_file)
+        x = widget.winfo_rootx()
+        y = widget.winfo_rooty() + widget.winfo_height()
+        m.tk_popup(x, y)
 
-        editor_label = tk.Label(editor_frame, text="File Editor",
-            bg="#313244", fg="#cba6f7", font=("Courier New", 10, "bold"), pady=4)
-        editor_label.pack(fill=tk.X)
+    # ── Body: sidebar + content ───────────────────────────────────────────────
+    def _build_body(self):
+        body = tk.Frame(self.root, bg=BG)
+        body.pack(fill=tk.BOTH, expand=True)
 
-        editor_scroll = ttk.Scrollbar(editor_frame)
-        editor_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        # ── Sidebar ──
+        sidebar = tk.Frame(body, bg=SIDEBAR_BG, width=200)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar.pack_propagate(False)
+        tk.Frame(sidebar, bg=BORDER, width=1).pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.editor = tk.Text(editor_frame, yscrollcommand=editor_scroll.set,
-            bg="#181825", fg="#cdd6f4", insertbackground="#cdd6f4",
-            font=("Courier New", 11), relief=tk.FLAT, bd=8,
-            undo=True, wrap=tk.WORD)
-        self.editor.pack(fill=tk.BOTH, expand=True)
-        editor_scroll.config(command=self.editor.yview)
+        def section(label):
+            tk.Label(sidebar, text=label, bg=SIDEBAR_BG, fg=TEXT_DIM,
+                     font=("Segoe UI", 7, "bold"), anchor=tk.W,
+                     padx=16).pack(fill=tk.X, pady=(6,0))
 
-        save_btn = tk.Button(editor_frame, text="💾 Save File",
-            command=self.save_file,
-            bg="#a6e3a1", fg="#1e1e2e", font=("Courier New", 10, "bold"),
-            relief=tk.FLAT, padx=10, pady=4, cursor="hand2")
-        save_btn.pack(pady=4)
+        def link(label, path):
+            f = tk.Frame(sidebar, bg=SIDEBAR_BG, cursor="hand2")
+            l = tk.Label(f, text=label, bg=SIDEBAR_BG, fg=TEXT_MAIN,
+                         font=("Segoe UI", 9), anchor=tk.W, padx=20, pady=4)
+            f.pack(fill=tk.X); l.pack(fill=tk.X)
+            for w in (f, l):
+                w.bind("<Button-1>", lambda e, p=path: self.navigate(p))
+                w.bind("<Enter>",
+                       lambda e, a=f, b=l: (a.config(bg=ITEM_HOVER), b.config(bg=ITEM_HOVER)))
+                w.bind("<Leave>",
+                       lambda e, a=f, b=l: (a.config(bg=SIDEBAR_BG), b.config(bg=SIDEBAR_BG)))
 
-        self.editing_path = None
+        home = os.path.expanduser("~")
+        section("Home")
+        link("🏠  Home",      home)
+        link("🖼  Gallery",   os.path.join(home, "Pictures"))
 
-    # ── Status Bar ───────────────────────────────────────────────────────────
+        ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=4)
+        section("Quick Access")
+        link("🖥  Desktop",   os.path.join(home, "Desktop"))
+        link("⬇  Downloads", os.path.join(home, "Downloads"))
+        link("📄  Documents", os.path.join(home, "Documents"))
+        link("🖼  Pictures",  os.path.join(home, "Pictures"))
+        link("🎵  Music",     os.path.join(home, "Music"))
+        link("🎬  Videos",    os.path.join(home, "Videos"))
 
-    def _build_status_bar(self):
-        self.status_var = tk.StringVar(value="Ready")
-        status = tk.Label(self.root, textvariable=self.status_var,
-            bg="#313244", fg="#a6adc8", anchor=tk.W,
-            font=("Courier New", 9), padx=8)
-        status.pack(side=tk.BOTTOM, fill=tk.X)
-
-    # ── Tree ─────────────────────────────────────────────────────────────────
-
-    def refresh_tree(self):
-        self.tree.delete(*self.tree.get_children())
-        root_node = self.tree.insert("", tk.END, text=self.current_path,
-                                     values=[self.current_path], open=True)
-        self._populate_tree(root_node, self.current_path)
-
-    def _populate_tree(self, parent, path):
-        folders, _ = file_ops.list_directory(path)
-        for folder in folders:
-            full = os.path.join(path, folder)
-            node = self.tree.insert(parent, tk.END, text=f"📁 {folder}", values=[full])
-            self.tree.insert(node, tk.END, text="loading...")  # lazy placeholder
-
-    def on_tree_open(self, event):
-        node = self.tree.focus()
-        children = self.tree.get_children(node)
-        if len(children) == 1 and self.tree.item(children[0], "text") == "loading...":
-            self.tree.delete(children[0])
-            path = self.tree.item(node, "values")[0]
-            self._populate_tree(node, path)
-
-    def on_tree_select(self, event):
-        node = self.tree.focus()
-        if node:
-            path = self.tree.item(node, "values")[0]
-            if path and os.path.isdir(path):
-                self.current_path = path
-                self.path_var.set(path)
-                self.refresh_list(path)
-                self.status_var.set(f"Browsing: {path}")
-
-    # ── File List ─────────────────────────────────────────────────────────────
-
-    def refresh_list(self, path):
-        self.file_list.delete(0, tk.END)
-        folders, files = file_ops.list_directory(path)
-        for f in folders:
-            self.file_list.insert(tk.END, f"📁  {f}")
-        for f in files:
-            self.file_list.insert(tk.END, f"📄  {f}")
-        self._list_items = [(f, True) for f in folders] + [(f, False) for f in files]
-
-    def on_list_double_click(self, event):
-        idx = self.file_list.curselection()
-        if not idx:
-            return
-        name, is_dir = self._list_items[idx[0]]
-        full_path = os.path.join(self.current_path, name)
-        if is_dir:
-            self.current_path = full_path
-            self.path_var.set(full_path)
-            self.refresh_list(full_path)
-            self.refresh_tree()
-            self.status_var.set(f"Entered: {full_path}")
+        ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=4)
+        section("This PC")
+        if sys.platform == "win32":
+            import string
+            for d in string.ascii_uppercase:
+                p = f"{d}:\\"
+                if os.path.exists(p):
+                    link(f"💾  {d}:\\", p)
         else:
-            self.open_file(full_path)
+            link("💾  /", "/")
 
-    def on_list_select(self, event):
-        idx = self.file_list.curselection()
-        if idx:
-            name, _ = self._list_items[idx[0]]
-            self.selected_item_path = os.path.join(self.current_path, name)
+        # ── Content area ──
+        content = tk.Frame(body, bg=CONTENT_BG)
+        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    # ── Editor ────────────────────────────────────────────────────────────────
+        # Horizontal scrollbar at bottom
+        hbar = ttk.Scrollbar(content, orient=tk.HORIZONTAL)
+        hbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    def open_file(self, path):
-        try:
-            content = file_ops.read_file(path)
-            self.editor.delete("1.0", tk.END)
-            self.editor.insert(tk.END, content)
-            self.editing_path = path
-            self.status_var.set(f"Editing: {path}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Cannot open file:\n{e}")
+        # Vertical scrollbar at right
+        vbar = ttk.Scrollbar(content, orient=tk.VERTICAL)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-    def save_file(self):
-        if not self.editing_path:
-            messagebox.showinfo("No file", "No file is currently open in the editor.")
+        self.cvs = tk.Canvas(content, bg=CONTENT_BG, highlightthickness=0,
+                             xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+        self.cvs.pack(fill=tk.BOTH, expand=True)
+        hbar.config(command=self.cvs.xview)
+        vbar.config(command=self.cvs.yview)
+
+        self.grid_frame = tk.Frame(self.cvs, bg=CONTENT_BG)
+        self.grid_win = self.cvs.create_window((0, 0), window=self.grid_frame,
+                                                anchor="nw")
+
+        self.grid_frame.bind("<Configure>", self._on_frame_config)
+        self.cvs.bind("<Configure>",        self._on_canvas_config)
+        self.cvs.bind("<MouseWheel>",
+                      lambda e: self.cvs.yview_scroll(-1*(e.delta//120), "units"))
+        self.cvs.bind("<Shift-MouseWheel>",
+                      lambda e: self.cvs.xview_scroll(-1*(e.delta//120), "units"))
+        self.cvs.bind("<Button-1>",  self._deselect)
+        self.grid_frame.bind("<Button-1>", self._deselect)
+        self.cvs.bind("<Button-3>",  self._bg_ctx)
+        self.grid_frame.bind("<Button-3>", self._bg_ctx)
+
+    def _on_frame_config(self, _=None):
+        self.cvs.configure(scrollregion=self.cvs.bbox("all"))
+
+    def _on_canvas_config(self, event):
+        self.cvs.itemconfig(self.grid_win, width=event.width)
+        self._relayout()
+
+    # ── Status bar ────────────────────────────────────────────────────────────
+    def _build_statusbar(self):
+        bar = tk.Frame(self.root, bg=BG,
+                       highlightbackground=BORDER, highlightthickness=1)
+        bar.pack(side=tk.BOTTOM, fill=tk.X)
+        inner = tk.Frame(bar, bg=BG)
+        inner.pack(fill=tk.X, padx=14, pady=3)
+        self.status_var = tk.StringVar(value="")
+        tk.Label(inner, textvariable=self.status_var, bg=BG,
+                 fg=TEXT_SUB, font=("Segoe UI", 8),
+                 anchor=tk.W).pack(side=tk.LEFT)
+        # View toggle icons (decorative)
+        tk.Label(inner, text="☰  ⊞", bg=BG, fg=TEXT_DIM,
+                 font=("Segoe UI", 10)).pack(side=tk.RIGHT)
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+    def navigate(self, path, push=True):
+        path = path.strip()
+        if not os.path.isdir(path):
+            messagebox.showerror("Error", f"Not a folder:\n{path}")
             return
-        content = self.editor.get("1.0", tk.END)
-        try:
-            file_ops.write_file(self.editing_path, content)
-            self.status_var.set(f"Saved: {self.editing_path}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not save:\n{e}")
+        self.current_path = path
+        self.path_var.set(path)
+        folder_name = os.path.basename(path) or path
+        self.title_var.set(folder_name or "File Explorer")
+        if push:
+            self.history = self.history[:self.hidx+1]
+            self.history.append(path)
+            self.hidx = len(self.history)-1
+        self._update_nav()
+        self._refresh()
 
-    # ── Toolbar Actions ───────────────────────────────────────────────────────
+    def go_back(self):
+        if self.hidx > 0:
+            self.hidx -= 1
+            self.navigate(self.history[self.hidx], push=False)
+
+    def go_forward(self):
+        if self.hidx < len(self.history)-1:
+            self.hidx += 1
+            self.navigate(self.history[self.hidx], push=False)
 
     def go_up(self):
-        parent = os.path.dirname(self.current_path)
-        if parent != self.current_path:
-            self.current_path = parent
-            self.path_var.set(parent)
-            self.refresh_list(parent)
-            self.refresh_tree()
+        p = os.path.dirname(self.current_path)
+        if p != self.current_path:
+            self.navigate(p)
 
-    def navigate_to_path(self, event=None):
-        path = self.path_var.get().strip()
-        if os.path.isdir(path):
-            self.current_path = path
-            self.refresh_list(path)
-            self.refresh_tree()
-        else:
-            messagebox.showerror("Invalid path", f"Not a directory:\n{path}")
+    def _update_nav(self):
+        cb = self.hidx > 0
+        cf = self.hidx < len(self.history)-1
+        self.btn_back.config(state=tk.NORMAL if cb else tk.DISABLED,
+                             fg=TEXT_MAIN if cb else TEXT_DIM)
+        self.btn_fwd.config(state=tk.NORMAL if cf else tk.DISABLED,
+                            fg=TEXT_MAIN if cf else TEXT_DIM)
 
+    # ── Grid ──────────────────────────────────────────────────────────────────
+    def _refresh(self):
+        for t in self._tiles: t.destroy()
+        self._tiles    = []
+        self.sel_tile  = None
+        self.sel_path  = None
+
+        folders, files = file_ops.list_directory(self.current_path)
+        total = len(folders) + len(files)
+        self.status_var.set(f"{total} item{'s' if total != 1 else ''}")
+
+        if total == 0:
+            tk.Label(self.grid_frame, text="This folder is empty",
+                     bg=CONTENT_BG, fg=TEXT_DIM,
+                     font=("Segoe UI", 12)).grid(row=0, column=0,
+                                                  padx=40, pady=60)
+            self._on_frame_config()
+            return
+
+        for name in folders:
+            tile = FolderTile(self.grid_frame, name,
+                              self._click, self._dbl, self._rclick)
+            self._tiles.append(tile)
+
+        self._relayout()
+
+    def _relayout(self):
+        # Remove existing grid placements
+        for t in self._tiles:
+            t.grid_forget()
+
+        w         = self.cvs.winfo_width() or 900
+        col_count = max(1, (w - 16) // (FolderTile.W + 8))
+        row = col  = 0
+        for tile in self._tiles:
+            tile.grid(row=row, column=col, padx=4, pady=4, sticky="n")
+            col += 1
+            if col >= col_count:
+                col = 0; row += 1
+
+        self.grid_frame.update_idletasks()
+        self._on_frame_config()
+
+    # ── Tile events ───────────────────────────────────────────────────────────
+    def _click(self, tile):
+        if self.sel_tile and self.sel_tile != tile:
+            self.sel_tile.set_selected(False)
+        tile.set_selected(True)
+        self.sel_tile = tile
+        self.sel_path = os.path.join(self.current_path, tile.name)
+        self.status_var.set(f"1 item selected  ·  {tile.name}")
+
+    def _dbl(self, tile):
+        self.navigate(os.path.join(self.current_path, tile.name))
+
+    def _rclick(self, tile, event):
+        self._click(tile)
+        m = tk.Menu(self.root, tearoff=0, font=("Segoe UI", 9),
+                    bg=TOPBAR_BG, fg=TEXT_MAIN,
+                    activebackground=ITEM_SEL, activeforeground=TEXT_MAIN)
+        m.add_command(label="Open",   command=lambda: self._dbl(tile))
+        m.add_separator()
+        m.add_command(label="Rename", command=self.rename_item)
+        m.add_command(label="Delete", command=self.delete_item)
+        m.tk_popup(event.x_root, event.y_root)
+
+    def _deselect(self, _=None):
+        if self.sel_tile:
+            self.sel_tile.set_selected(False)
+            self.sel_tile = None
+            self.sel_path = None
+            folders, files = file_ops.list_directory(self.current_path)
+            total = len(folders) + len(files)
+            self.status_var.set(f"{total} item{'s' if total != 1 else ''}")
+
+    def _bg_ctx(self, event):
+        m = tk.Menu(self.root, tearoff=0, font=("Segoe UI", 9),
+                    bg=TOPBAR_BG, fg=TEXT_MAIN,
+                    activebackground=ITEM_SEL, activeforeground=TEXT_MAIN)
+        m.add_command(label="New Folder", command=self.create_folder)
+        m.add_command(label="New File",   command=self.create_file)
+        m.add_separator()
+        m.add_command(label="Refresh",
+                      command=lambda: self.navigate(self.current_path, push=False))
+        m.tk_popup(event.x_root, event.y_root)
+
+    # ── CRUD ──────────────────────────────────────────────────────────────────
     def create_folder(self):
-        name = simpledialog.askstring("New Folder", "Folder name:", parent=self.root)
+        name = simpledialog.askstring("New Folder", "Folder name:",
+                                      parent=self.root)
         if name:
             try:
                 file_ops.create_folder(self.current_path, name)
-                self.refresh_list(self.current_path)
-                self.refresh_tree()
-                self.status_var.set(f"Created folder: {name}")
+                self._refresh()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
 
     def create_file(self):
-        name = simpledialog.askstring("New File", "File name:", parent=self.root)
+        name = simpledialog.askstring("New File", "File name:",
+                                      parent=self.root)
         if name:
             try:
-                path = file_ops.create_file(self.current_path, name)
-                self.refresh_list(self.current_path)
-                self.open_file(path)
-                self.status_var.set(f"Created file: {name}")
+                file_ops.create_file(self.current_path, name)
+                self._refresh()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
 
     def rename_item(self):
-        if not self.selected_item_path:
-            messagebox.showinfo("No selection", "Select a file or folder first.")
+        if not self.sel_path:
+            messagebox.showinfo("No selection", "Click a folder first.")
             return
-        old_name = os.path.basename(self.selected_item_path)
-        new_name = simpledialog.askstring("Rename", "New name:", initialvalue=old_name, parent=self.root)
-        if new_name and new_name != old_name:
+        old  = os.path.basename(self.sel_path)
+        new  = simpledialog.askstring("Rename", "New name:",
+                                      initialvalue=old, parent=self.root)
+        if new and new != old:
             try:
-                file_ops.rename_item(self.selected_item_path, new_name)
-                self.selected_item_path = None
-                self.refresh_list(self.current_path)
-                self.refresh_tree()
-                self.status_var.set(f"Renamed to: {new_name}")
+                file_ops.rename_item(self.sel_path, new)
+                self.sel_tile = None; self.sel_path = None
+                self._refresh()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
 
     def delete_item(self):
-        if not self.selected_item_path:
-            messagebox.showinfo("No selection", "Select a file or folder first.")
+        if not self.sel_path:
+            messagebox.showinfo("No selection", "Click a folder first.")
             return
-        name = os.path.basename(self.selected_item_path)
-        confirm = messagebox.askyesno("Delete", f"Delete '{name}'?\nThis cannot be undone.")
-        if confirm:
+        name = os.path.basename(self.sel_path)
+        if messagebox.askyesno("Delete",
+                f"Permanently delete '{name}'?\nThis cannot be undone."):
             try:
-                file_ops.delete_item(self.selected_item_path)
-                self.selected_item_path = None
-                self.refresh_list(self.current_path)
-                self.refresh_tree()
-                self.status_var.set(f"Deleted: {name}")
+                file_ops.delete_item(self.sel_path)
+                self.sel_tile = None; self.sel_path = None
+                self._refresh()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
-
-    # ── Context Menus ─────────────────────────────────────────────────────────
-
-    def show_list_context_menu(self, event):
-        idx = self.file_list.nearest(event.y)
-        if idx >= 0:
-            self.file_list.selection_clear(0, tk.END)
-            self.file_list.selection_set(idx)
-            name, _ = self._list_items[idx]
-            self.selected_item_path = os.path.join(self.current_path, name)
-
-        menu = tk.Menu(self.root, tearoff=0, bg="#313244", fg="#cdd6f4",
-                       activebackground="#45475a", font=("Courier New", 10))
-        menu.add_command(label="📁 New Folder", command=self.create_folder)
-        menu.add_command(label="📄 New File", command=self.create_file)
-        if self.selected_item_path:
-            menu.add_separator()
-            menu.add_command(label="✏ Rename", command=self.rename_item)
-            menu.add_command(label="🗑 Delete", command=self.delete_item)
-        menu.tk_popup(event.x_root, event.y_root)
-
-    def show_tree_context_menu(self, event):
-        item = self.tree.identify_row(event.y)
-        if item:
-            self.tree.selection_set(item)
-        menu = tk.Menu(self.root, tearoff=0, bg="#313244", fg="#cdd6f4",
-                       activebackground="#45475a", font=("Courier New", 10))
-        menu.add_command(label="📁 New Folder", command=self.create_folder)
-        menu.add_command(label="📄 New File", command=self.create_file)
-        menu.tk_popup(event.x_root, event.y_root)
