@@ -132,10 +132,12 @@ class FileExplorerApp:
         self._tiles        = []
 
         self._styles()
-        self._build_titlebar()
         self._build_toolbar()
         self._build_body()
         self._build_statusbar()
+
+        self.root.bind("<Tab>", self._on_tab)
+        self.root.bind("<Shift-Tab>", self._on_shift_tab)
 
         self.navigate(self.current_path, push=False)
 
@@ -155,34 +157,6 @@ class FileExplorerApp:
         s.configure("Vertical.TScrollbar", troughcolor=BG, background=BORDER)
         s.configure("Horizontal.TScrollbar", troughcolor=BG, background=BORDER)
 
-    # ── Title bar (mimics Windows chrome) ─────────────────────────────────────
-    def _build_titlebar(self):
-        bar = tk.Frame(self.root, bg=TOPBAR_BG,
-                       highlightbackground=BORDER, highlightthickness=1)
-        bar.pack(side=tk.TOP, fill=tk.X)
-
-        # Tab label
-        tab = tk.Frame(bar, bg=TOPBAR_BG)
-        tab.pack(side=tk.LEFT, padx=6, pady=4)
-        tk.Label(tab, text="🗂", bg=TOPBAR_BG,
-                 font=("Segoe UI", 11)).pack(side=tk.LEFT)
-        self.title_var = tk.StringVar(value="File Explorer")
-        tk.Label(tab, textvariable=self.title_var, bg=TOPBAR_BG,
-                 fg=TEXT_MAIN, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=4)
-
-        # Window controls (decorative)
-        ctrl = tk.Frame(bar, bg=TOPBAR_BG)
-        ctrl.pack(side=tk.RIGHT)
-        for sym, col, hcol in [("─", TOPBAR_BG, TOOLBAR_HOV),
-                                ("□", TOPBAR_BG, TOOLBAR_HOV),
-                                ("✕", TOPBAR_BG, "#c42b1c")]:
-            b = tk.Button(ctrl, text=sym, bg=TOPBAR_BG, fg=TEXT_MAIN,
-                          relief=tk.FLAT, font=("Segoe UI", 10),
-                          width=4, pady=4, bd=0,
-                          activebackground=hcol, activeforeground="#ffffff",
-                          cursor="hand2")
-            b.pack(side=tk.LEFT)
-
     # ── Nav + address bar ─────────────────────────────────────────────────────
     def _build_toolbar(self):
         # Row 1: nav + address
@@ -198,49 +172,7 @@ class FileExplorerApp:
         self._nav_btn(nav, "↑", self.go_up)
         self._nav_btn(nav, "↻", lambda: self.navigate(self.current_path, push=False))
 
-        # Address bar
-        addr = tk.Frame(nav_bar, bg="#ffffff",
-                        highlightbackground=BORDER, highlightthickness=1)
-        addr.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=6)
-        self.path_var = tk.StringVar()
-        tk.Entry(addr, textvariable=self.path_var, bg="#ffffff",
-                 fg=TEXT_MAIN, font=("Segoe UI", 10), relief=tk.FLAT,
-                 bd=5, insertbackground=ACCENT
-                 ).pack(fill=tk.X)
-        addr.bind_all("<Return>",
-                      lambda e: self.navigate(self.path_var.get().strip()))
 
-        # Row 2: action toolbar (New, Cut, Copy, Rename, Delete, Sort, View)
-        tb = tk.Frame(self.root, bg=TOPBAR_BG)
-        tb.pack(side=tk.TOP, fill=tk.X)
-        tk.Frame(tb, bg=BORDER, height=1).pack(side=tk.BOTTOM, fill=tk.X)
-
-        inner = tk.Frame(tb, bg=TOPBAR_BG)
-        inner.pack(side=tk.LEFT, padx=8, pady=4)
-
-        # New button (dropdown-style)
-        new_btn = self._tb_btn(inner, "⊕  New  ▾", None)
-        new_btn.config(command=lambda: self._new_menu(new_btn))
-
-        tk.Frame(inner, bg=BORDER, width=1, height=22).pack(side=tk.LEFT, padx=6)
-
-        self._tb_btn(inner, "✂", None, tip="Cut")
-        self._tb_btn(inner, "⎘", None, tip="Copy")
-        self._tb_btn(inner, "📋", None, tip="Paste")
-
-        tk.Frame(inner, bg=BORDER, width=1, height=22).pack(side=tk.LEFT, padx=6)
-
-        self._tb_btn(inner, "✎  Rename", self.rename_item)
-        self._tb_btn(inner, "🗑  Delete", self.delete_item)
-
-        tk.Frame(inner, bg=BORDER, width=1, height=22).pack(side=tk.LEFT, padx=6)
-        self._tb_btn(inner, "⊞  Sort ▾", None)
-        self._tb_btn(inner, "👁  View ▾", None)
-
-        # Details on right
-        tk.Label(tb, text="Details", bg=TOPBAR_BG, fg=TEXT_SUB,
-                 font=("Segoe UI", 9), cursor="hand2",
-                 padx=12).pack(side=tk.RIGHT, pady=4)
 
     def _nav_btn(self, parent, text, cmd):
         b = tk.Button(parent, text=text, command=cmd,
@@ -251,27 +183,6 @@ class FileExplorerApp:
         b.bind("<Enter>", lambda e: b.config(bg=TOOLBAR_HOV))
         b.bind("<Leave>", lambda e: b.config(bg=TOPBAR_BG))
         return b
-
-    def _tb_btn(self, parent, text, cmd, tip=""):
-        b = tk.Button(parent, text=text, command=cmd if cmd else lambda: None,
-            bg=TOOLBAR_BTN, fg=TEXT_MAIN, relief=tk.FLAT,
-            font=("Segoe UI", 9), padx=10, pady=3,
-            cursor="hand2", activebackground=TOOLBAR_ACT, bd=0,
-            highlightbackground=BORDER, highlightthickness=0)
-        b.pack(side=tk.LEFT, padx=2)
-        b.bind("<Enter>", lambda e: b.config(bg=TOOLBAR_HOV))
-        b.bind("<Leave>", lambda e: b.config(bg=TOOLBAR_BTN))
-        return b
-
-    def _new_menu(self, widget):
-        m = tk.Menu(self.root, tearoff=0, font=("Segoe UI", 9),
-                    bg=TOPBAR_BG, fg=TEXT_MAIN,
-                    activebackground=ITEM_SEL, activeforeground=TEXT_MAIN)
-        m.add_command(label="📁  Folder", command=self.create_folder)
-        m.add_command(label="📄  File",   command=self.create_file)
-        x = widget.winfo_rootx()
-        y = widget.winfo_rooty() + widget.winfo_height()
-        m.tk_popup(x, y)
 
     # ── Body: sidebar + content ───────────────────────────────────────────────
     def _build_body(self):
@@ -340,9 +251,8 @@ class FileExplorerApp:
             messagebox.showerror("Error", f"Not a folder:\n{path}")
             return
         self.current_path = path
-        self.path_var.set(path)
         folder_name = os.path.basename(path) or path
-        self.title_var.set(folder_name or "File Explorer")
+        self.root.title(folder_name or "File Explorer")
         if push:
             self.history = self.history[:self.hidx+1]
             self.history.append(path)
@@ -417,6 +327,18 @@ class FileExplorerApp:
         self._on_frame_config()
 
     # ── Tile events ───────────────────────────────────────────────────────────
+    def _on_tab(self, event):
+        if not self._tiles: return "break"
+        idx = (self._tiles.index(self.sel_tile) + 1) % len(self._tiles) if self.sel_tile in self._tiles else 0
+        self._click(self._tiles[idx])
+        return "break"
+
+    def _on_shift_tab(self, event):
+        if not self._tiles: return "break"
+        idx = (self._tiles.index(self.sel_tile) - 1) % len(self._tiles) if self.sel_tile in self._tiles else len(self._tiles) - 1
+        self._click(self._tiles[idx])
+        return "break"
+
     def _click(self, tile):
         if self.sel_tile and self.sel_tile != tile:
             self.sel_tile.set_selected(False)
