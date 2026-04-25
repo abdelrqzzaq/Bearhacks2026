@@ -278,54 +278,6 @@ class FileExplorerApp:
         body = tk.Frame(self.root, bg=BG)
         body.pack(fill=tk.BOTH, expand=True)
 
-        # ── Sidebar ──
-        sidebar = tk.Frame(body, bg=SIDEBAR_BG, width=200)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
-        tk.Frame(sidebar, bg=BORDER, width=1).pack(side=tk.RIGHT, fill=tk.Y)
-
-        def section(label):
-            tk.Label(sidebar, text=label, bg=SIDEBAR_BG, fg=TEXT_DIM,
-                     font=("Segoe UI", 7, "bold"), anchor=tk.W,
-                     padx=16).pack(fill=tk.X, pady=(6,0))
-
-        def link(label, path):
-            f = tk.Frame(sidebar, bg=SIDEBAR_BG, cursor="hand2")
-            l = tk.Label(f, text=label, bg=SIDEBAR_BG, fg=TEXT_MAIN,
-                         font=("Segoe UI", 9), anchor=tk.W, padx=20, pady=4)
-            f.pack(fill=tk.X); l.pack(fill=tk.X)
-            for w in (f, l):
-                w.bind("<Button-1>", lambda e, p=path: self.navigate(p))
-                w.bind("<Enter>",
-                       lambda e, a=f, b=l: (a.config(bg=ITEM_HOVER), b.config(bg=ITEM_HOVER)))
-                w.bind("<Leave>",
-                       lambda e, a=f, b=l: (a.config(bg=SIDEBAR_BG), b.config(bg=SIDEBAR_BG)))
-
-        home = os.path.expanduser("~")
-        section("Home")
-        link("🏠  Home",      home)
-        link("🖼  Gallery",   os.path.join(home, "Pictures"))
-
-        ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=4)
-        section("Quick Access")
-        link("🖥  Desktop",   os.path.join(home, "Desktop"))
-        link("⬇  Downloads", os.path.join(home, "Downloads"))
-        link("📄  Documents", os.path.join(home, "Documents"))
-        link("🖼  Pictures",  os.path.join(home, "Pictures"))
-        link("🎵  Music",     os.path.join(home, "Music"))
-        link("🎬  Videos",    os.path.join(home, "Videos"))
-
-        ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=4)
-        section("This PC")
-        if sys.platform == "win32":
-            import string
-            for d in string.ascii_uppercase:
-                p = f"{d}:\\"
-                if os.path.exists(p):
-                    link(f"💾  {d}:\\", p)
-        else:
-            link("💾  /", "/")
-
         # ── Content area ──
         content = tk.Frame(body, bg=CONTENT_BG)
         content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
