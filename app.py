@@ -3,6 +3,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import file_ops
+import queue
 
 # ── Windows 11 light palette ─────────────────────────────────────────────────
 BG          = "#f3f3f3"
@@ -141,6 +142,8 @@ class FileExplorerApp:
         self.root.bind("<Return>", self._on_enter)
 
         self.navigate(self.current_path, push=False)
+        self.ai_queue = queue.Queue() # Creating mailbox for AI messages
+        self.check_ai_queue() # Checking mailbox
 
     # ── TTK styles ────────────────────────────────────────────────────────────
     def _styles(self):
@@ -425,3 +428,29 @@ class FileExplorerApp:
                 self._refresh()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
+    def execute_ai_action(self, gesture_label, target_path=None):
+        if gesture_label == "GESTURE_CREATE":
+            # Example: AI gesture triggers the create_file logic
+            self.create_file()  # Calls your existing method in app.py
+            
+        elif gesture_label == "GESTURE_DELETE":
+            # AI gesture triggers the delete logic for the selected item
+            self.delete_item()
+            
+        elif gesture_label == "GESTURE_RENAME":
+            # AI gesture triggers the rename prompt
+            self.rename_item()
+    def check_ai_queue(self):
+        # checks queue every 100 ms
+        try:
+            #Check if there is a message in the mailbox
+            gesture_label = self.ai_queue.get_nowait()
+
+            #If message found, trigger action
+            self.execute_ai_action(gesture_label)
+
+        except queue.Empty:
+            pass #No message, do nothing
+
+        self.root.after(100, self.check_ai_queue) #calls function again after 100 ms
+        
